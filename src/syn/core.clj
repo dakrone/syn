@@ -176,6 +176,7 @@
            insecure? save-request? proxy-host proxy-port as cookie-store
            retry-handler response-interceptor digest-auth connection-manager
            client-params] :as req}]
+  (println "Initiating request with:" req)
   (let [^ClientConnectionManager conn-mgr
         (or connection-manager
             conn/*connection-manager*

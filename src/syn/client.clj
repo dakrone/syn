@@ -219,10 +219,14 @@
   [client]
   (fn [req]
     (if (= false (:decompress-body req))
+      ;; do I need to pipeline this?
       (client req)
-      (let [req-c (update req :headers assoc "accept-encoding" "gzip, deflate")
-            resp-c (client req-c)]
-        (decompress-body resp-c)))))
+      (let [p (pipeline
+               (fn wrap-decompression-pipeline
+                 [resp-c]
+                 (decompress-body resp-c)))
+            req-c (update req :headers assoc "accept-encoding" "gzip, deflate")]
+        (p (task (client req-c)))))))
 
 ;; Multimethods for coercing body type to the :as key
 (defmulti coerce-response-body (fn [req _] (:as req)))
@@ -304,10 +308,14 @@
   additional coercions."
   [client]
   (fn [req]
-    (let [{:keys [body] :as resp} (client req)]
-      (if body
-        (coerce-response-body req resp)
-        resp))))
+    (let [p (pipeline
+             (fn wrap-output-coercion-pipeline
+               [{:keys [body] :as resp}]
+               (println "Coercing response")
+               (if body
+                 (coerce-response-body req resp)
+                 resp)))]
+      (p (task (client req))))))
 
 (defn maybe-wrap-entity
   "Wrap an HttpEntity in a BufferedHttpEntity if warranted."
@@ -321,6 +329,8 @@
   Apache Entity. Currently supports Strings, Files, InputStreams
   and byte-arrays."
   [client]
+  ;; TODO: determine whether I need to do things here for pipelines since
+  ;; there's no post-client work
   (fn [{:keys [body body-encoding length]
         :or {^String body-encoding "UTF-8"} :as req}]
     (if body
@@ -386,12 +396,15 @@
   (fn [req]
     (if (:decode-body-headers req)
       (if crouton-enabled?
-        (let [resp (client req)
-              b (:body resp)
-              body-map (parse-html b)
-              additional-headers (get-headers-from-body body-map)]
-          (assoc resp :headers (merge (:headers resp)
-                                      additional-headers)))
+        (let [p (pipeline
+                 (fn wrap-additional-header-parsing-pipeline
+                   [resp]
+                   (let [b (:body resp)
+                         body-map (parse-html b)
+                         additional-headers (get-headers-from-body body-map)]
+                     (assoc resp :headers (merge (:headers resp)
+                                                 additional-headers)))))]
+          (p (task (client req))))
         (client req))
       (client req))))
 
@@ -505,9 +518,9 @@
   [client]
   (fn [req]
     (if-let [m (:method req)]
-      (client (-> req (dissoc :method)
-                  (assoc :request-method m)))
-      (client req))))
+      (task (client (-> req (dissoc :method)
+                   (assoc :request-method m))))
+      (task (client req)))))
 
 (defn wrap-form-params
   "Middleware wrapping the submission or form parameters."
@@ -556,8 +569,8 @@
   [client]
   (fn [req]
     (if-let [url (:url req)]
-      (client (-> req (dissoc :url) (merge (parse-url url))))
-      (client req))))
+      (task (client (-> req (dissoc :url) (merge (parse-url url)))))
+      (task (client req)))))
 
 (defn wrap-unknown-host
   "Middleware ignoring unknown hosts when the :ignore-unknown-host? option
@@ -598,12 +611,12 @@
    core client. See client/client."
   [request]
   (-> request
-      wrap-request-timing
-      wrap-lower-case-headers
-      wrap-query-params
-      wrap-basic-auth
-      wrap-oauth
-      wrap-user-info
+      ;; wrap-request-timing ;; timing async?
+      ;; wrap-lower-case-headers
+      ;; wrap-query-params
+      ;; wrap-basic-auth
+      ;; wrap-oauth
+      ;; wrap-user-info
       wrap-url
       wrap-redirects
       wrap-decompression
@@ -613,15 +626,16 @@
       wrap-additional-header-parsing
       wrap-output-coercion
       wrap-exceptions
-      wrap-accept
-      wrap-accept-encoding
-      wrap-content-type
-      wrap-form-params
-      wrap-nested-params
+      ;; wrap-accept
+      ;; wrap-accept-encoding
+      ;; wrap-content-type
+      ;; wrap-form-params
+      ;; wrap-nested-params
       wrap-method
       ;;      wrap-cookies
       ;;      wrap-links
-      wrap-unknown-host))
+      ;; wrap-unknown-host
+      ))
 
 (def ^{:dynamic true
        :doc
