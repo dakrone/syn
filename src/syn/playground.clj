@@ -1,4 +1,4 @@
-(ns syn.core
+(ns syn.playground
   (:require [lamina.core :refer :all]
             [lamina.executor :refer :all]
             [slingshot.slingshot :refer :all])
@@ -38,6 +38,23 @@
 (def a-new-client (a-wrap-increment-status client))
 
 ;; let's try a more difficult middleware
+
+(defn t-client
+  [request]
+  (task
+   (println "performing request:" request)
+   (println "returning:" r)
+   r))
+
+(defn a-wrap-increment-status2
+  [client]
+  (fn [request]
+    (let [p (pipeline
+             (fn [resp]
+               (Thread/sleep 1000)
+               (update-in resp [:status] inc)))
+          new-req (assoc request :incd true)]
+      (p (client new-req)))))
 
 (defn redirect?
   [{:keys [status]}]
@@ -102,7 +119,7 @@
                      resp-r))
                   :else
                   resp-r))))]
-      (p (task (client req))))))
+      (p (client req)))))
 
-(def a-new-client2 (a-wrap-redirects (a-wrap-increment-status client)))
+(def a-new-client2 (a-wrap-redirects (a-wrap-increment-status2 t-client)))
 ;;(a-new-client2 {:foo :bar :request-method :get :scheme "http" :server-name "localhost" :uri "/"})

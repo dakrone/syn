@@ -124,7 +124,7 @@
                  (if (:throw-entire-message? req)
                    (throw+ resp "clj-http: status %d %s" (:status %) resp)
                    (throw+ resp "clj-http: status %s" (:status %))))))]
-      (p (task (client req))))))
+      (p (client req)))))
 
 (declare wrap-redirects)
 
@@ -195,7 +195,7 @@
                    resp-r)
                   :else
                   resp-r))))]
-      (p (task (client req))))))
+      (p (client req)))))
 
 ;; Multimethods for Content-Encoding dispatch automatically
 ;; decompressing response bodies
@@ -226,7 +226,7 @@
                  [resp-c]
                  (decompress-body resp-c)))
             req-c (update req :headers assoc "accept-encoding" "gzip, deflate")]
-        (p (task (client req-c)))))))
+        (p (client req-c))))))
 
 ;; Multimethods for coercing body type to the :as key
 (defmulti coerce-response-body (fn [req _] (:as req)))
@@ -315,7 +315,7 @@
                (if body
                  (coerce-response-body req resp)
                  resp)))]
-      (p (task (client req))))))
+      (p (client req)))))
 
 (defn maybe-wrap-entity
   "Wrap an HttpEntity in a BufferedHttpEntity if warranted."
@@ -404,7 +404,7 @@
                          additional-headers (get-headers-from-body body-map)]
                      (assoc resp :headers (merge (:headers resp)
                                                  additional-headers)))))]
-          (p (task (client req))))
+          (p (client req)))
         (client req))
       (client req))))
 
@@ -469,10 +469,10 @@
   [client]
   (fn [{:keys [query-params] :as req}]
     (if query-params
-      (task (client (-> req (dissoc :query-params)
-                        (assoc :query-string
-                          (generate-query-string query-params)))))
-      (task (client req)))))
+      (client (-> req (dissoc :query-params)
+                  (assoc :query-string
+                    (generate-query-string query-params))))
+      (client req))))
 
 (defn basic-auth-value [basic-auth]
   (let [basic-auth (if (string? basic-auth)
@@ -485,20 +485,20 @@
   [client]
   (fn [req]
     (if-let [basic-auth (:basic-auth req)]
-      (task (client (-> req (dissoc :basic-auth)
-                        (assoc-in [:headers "authorization"]
-                                  (basic-auth-value basic-auth)))))
-      (task (client req)))))
+      (client (-> req (dissoc :basic-auth)
+                  (assoc-in [:headers "authorization"]
+                            (basic-auth-value basic-auth))))
+      (client req))))
 
 (defn wrap-oauth
   "Middleware converting the :oauth-token option into an Authorization header."
   [client]
   (fn [req]
     (if-let [oauth-token (:oauth-token req)]
-      (task (client (-> req (dissoc :oauth-token)
-                        (assoc-in [:headers "authorization"]
-                                  (str "Bearer " oauth-token)))))
-      (task (client req)))))
+      (client (-> req (dissoc :oauth-token)
+                  (assoc-in [:headers "authorization"]
+                            (str "Bearer " oauth-token))))
+      (client req))))
 
 
 (defn parse-user-info [user-info]
@@ -509,18 +509,18 @@
   "Middleware converting the :user-info option into a :basic-auth option"
   [client]
   (fn [req]
-    (task (if-let [[user password] (parse-user-info (:user-info req))]
-            (client (assoc req :basic-auth [user password]))
-            (client req)))))
+    (if-let [[user password] (parse-user-info (:user-info req))]
+      (client (assoc req :basic-auth [user password]))
+      (client req))))
 
 (defn wrap-method
   "Middleware converting the :method option into the :request-method option"
   [client]
   (fn [req]
     (if-let [m (:method req)]
-      (task (client (-> req (dissoc :method)
-                        (assoc :request-method m))))
-      (task (client req)))))
+      (client (-> req (dissoc :method)
+                  (assoc :request-method m)))
+      (client req))))
 
 (defn wrap-form-params
   "Middleware wrapping the submission or form parameters."
@@ -569,8 +569,8 @@
   [client]
   (fn [req]
     (if-let [url (:url req)]
-      (task (client (-> req (dissoc :url) (merge (parse-url url)))))
-      (task (client req)))))
+      (client (-> req (dissoc :url) (merge (parse-url url))))
+      (client req))))
 
 (defn wrap-unknown-host
   "Middleware ignoring unknown hosts when the :ignore-unknown-host? option
@@ -598,7 +598,7 @@
                (fn wrap-lower-case-headers-pipe
                  [resp]
                  (lower-case-headers resp)))]
-        (p (task (client (lower-case-headers req))))))))
+        (p (client (lower-case-headers req)))))))
 
 (defn wrap-request-timing
   "Middleware that times the request, putting the total time (in milliseconds)
@@ -606,15 +606,26 @@
   [client]
   (fn [req]
     (let [start (System/currentTimeMillis)
-          resp (client req)]
-      (assoc resp :request-time (- (System/currentTimeMillis) start)))))
+          p (pipeline
+             (fn wrap-request-timing-pipeline
+               [resp]
+               (assoc resp :request-time
+                      (- (System/currentTimeMillis) start))))]
+      (p (client req)))))
+
+(defn wrap-task
+  "Middleware that does nothing but wrap the client in a task"
+  [client]
+  (fn [req]
+    (task (client req))))
 
 (defn wrap-request
   "Returns a battaries-included HTTP request function coresponding to the given
    core client. See client/client."
   [request]
   (-> request
-      ;; wrap-request-timing ;; timing async?
+      wrap-task
+      wrap-request-timing
       wrap-lower-case-headers
       wrap-query-params
       wrap-basic-auth
@@ -629,11 +640,11 @@
       wrap-additional-header-parsing
       wrap-output-coercion
       wrap-exceptions
-      ;; wrap-accept
-      ;; wrap-accept-encoding
-      ;; wrap-content-type
-      ;; wrap-form-params
-      ;; wrap-nested-params
+      wrap-accept
+      wrap-accept-encoding
+      wrap-content-type
+      wrap-form-params
+      wrap-nested-params
       wrap-method
       ;;      wrap-cookies
       ;;      wrap-links
