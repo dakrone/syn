@@ -469,10 +469,10 @@
   [client]
   (fn [{:keys [query-params] :as req}]
     (if query-params
-      (client (-> req (dissoc :query-params)
-                  (assoc :query-string
-                    (generate-query-string query-params))))
-      (client req))))
+      (task (client (-> req (dissoc :query-params)
+                        (assoc :query-string
+                          (generate-query-string query-params)))))
+      (task (client req)))))
 
 (defn basic-auth-value [basic-auth]
   (let [basic-auth (if (string? basic-auth)
@@ -485,20 +485,20 @@
   [client]
   (fn [req]
     (if-let [basic-auth (:basic-auth req)]
-      (client (-> req (dissoc :basic-auth)
-                  (assoc-in [:headers "authorization"]
-                            (basic-auth-value basic-auth))))
-      (client req))))
+      (task (client (-> req (dissoc :basic-auth)
+                        (assoc-in [:headers "authorization"]
+                                  (basic-auth-value basic-auth)))))
+      (task (client req)))))
 
 (defn wrap-oauth
   "Middleware converting the :oauth-token option into an Authorization header."
   [client]
   (fn [req]
     (if-let [oauth-token (:oauth-token req)]
-      (client (-> req (dissoc :oauth-token)
-                  (assoc-in [:headers "authorization"]
-                            (str "Bearer " oauth-token))))
-      (client req))))
+      (task (client (-> req (dissoc :oauth-token)
+                        (assoc-in [:headers "authorization"]
+                                  (str "Bearer " oauth-token)))))
+      (task (client req)))))
 
 
 (defn parse-user-info [user-info]
@@ -509,9 +509,9 @@
   "Middleware converting the :user-info option into a :basic-auth option"
   [client]
   (fn [req]
-    (if-let [[user password] (parse-user-info (:user-info req))]
-      (client (assoc req :basic-auth [user password]))
-      (client req))))
+    (task (if-let [[user password] (parse-user-info (:user-info req))]
+            (client (assoc req :basic-auth [user password]))
+            (client req)))))
 
 (defn wrap-method
   "Middleware converting the :method option into the :request-method option"
@@ -519,7 +519,7 @@
   (fn [req]
     (if-let [m (:method req)]
       (task (client (-> req (dissoc :method)
-                   (assoc :request-method m))))
+                        (assoc :request-method m))))
       (task (client req)))))
 
 (defn wrap-form-params
@@ -594,8 +594,11 @@
            (assoc %1 :headers (util/lower-case-keys headers))
            %1)]
     (fn [req]
-      (-> (client (lower-case-headers req))
-          (lower-case-headers)))))
+      (let [p (pipeline
+               (fn wrap-lower-case-headers-pipe
+                 [resp]
+                 (lower-case-headers resp)))]
+        (p (task (client (lower-case-headers req))))))))
 
 (defn wrap-request-timing
   "Middleware that times the request, putting the total time (in milliseconds)
@@ -612,11 +615,11 @@
   [request]
   (-> request
       ;; wrap-request-timing ;; timing async?
-      ;; wrap-lower-case-headers
-      ;; wrap-query-params
-      ;; wrap-basic-auth
-      ;; wrap-oauth
-      ;; wrap-user-info
+      wrap-lower-case-headers
+      wrap-query-params
+      wrap-basic-auth
+      wrap-oauth
+      wrap-user-info
       wrap-url
       wrap-redirects
       wrap-decompression
